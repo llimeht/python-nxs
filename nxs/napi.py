@@ -341,7 +341,7 @@ class NeXus(object):
     # ==== File ====
     nxlib.nxiopen_.restype = c_int
     nxlib.nxiopen_.argtypes = [c_char_p, c_int, c_void_pp]
-    def __init__(self, filename, mode='r'):
+    def __init__(self, filename, mode='r', encoding='UTF-8'):
         """
         Open the NeXus file returning a handle.
 
@@ -367,17 +367,19 @@ class NeXus(object):
         if mode not in _nxopen_mode.values():
             raise ValueError("Invalid open mode %s" % str(mode))
 
-        self.filename, self.mode = filename, mode
+        self.encoding = encoding
+        self.filename = self._str2bytes(filename)
+        self.mode = mode
         self.handle = c_void_p(None)
         self._path = []
         self._indata = False
-        status = nxlib.nxiopen_(filename,mode,_ref(self.handle))
+        status = nxlib.nxiopen_(self.filename,mode,_ref(self.handle))
         if status == ERROR:
             if mode in [ACC_READ, ACC_RDWR]:
                 op = 'open'
             else:
                 op = 'create'
-            raise NeXusError("Could not %s %s" % (op,filename))
+            raise NeXusError("Could not %s %s" % (op,self.filename))
         self.isopen = True
 
     def _getpath(self):
@@ -390,6 +392,16 @@ class NeXus(object):
         return '/' + '/'.join(mypath)
     longpath = property(_getlongpath, doc="Unix-style path including " \
                         + "nxclass to the node")
+
+    def _str2bytes(self, s):
+        if isinstance(s, str):
+            s = s.encode(self.encoding)
+        return s
+
+    def _bytes2str(self, b):
+        if isinstance(b, bytes):
+            b = b.decode(self.encoding)
+        return b
 
     def __del__(self):
         """
@@ -469,7 +481,7 @@ class NeXus(object):
         Corresponds to NXsetnumberformat(&handle,type,format)
         """
         type = _nxtype_code[type]
-        status = nxlib.nxisetnumberformat_(self.handle,type,format)
+        status = nxlib.nxisetnumberformat_(self.handle,type,self._str2bytes(format))
         if status == ERROR:
             raise ValueError("Could not set %s to %s in %s" %
                              (type, format, self.filename))
@@ -486,7 +498,8 @@ class NeXus(object):
         Corresponds to NXmakegroup(handle, name, nxclass)
         """
         # print("makegroup", self._loc(), name, nxclass)
-        status = nxlib.nximakegroup_(self.handle, name, nxclass)
+        status = nxlib.nximakegroup_(self.handle, self._str2bytes(name),
+                                     self._str2bytes(nxclass))
         if status == ERROR:
             raise NeXusError("Could not create %s:%s in %s" %
                              (nxclass, name, self._loc()))
@@ -507,7 +520,7 @@ class NeXus(object):
 
         Corresponds to NXopenpath(handle, path)
         """
-        self._openpath(path, opendata=True)
+        self._openpath(self._str2bytes(path), opendata=True)
 
     def _openpath(self, path, opendata=True):
         """helper function: open relative path and maybe data"""
@@ -610,7 +623,7 @@ class NeXus(object):
 
         Corresponds to NXopengrouppath(handle, path)
         """
-        self._openpath(path,opendata=False)
+        self._openpath(self._str2bytes(path),opendata=False)
 
     nxlib.nxiopengroup_.restype = c_int
     nxlib.nxiopengroup_.argtypes = [c_void_p, c_char_p, c_char_p]
@@ -626,7 +639,8 @@ class NeXus(object):
         # print("opengroup", self._loc(), name, nxclass)
         if nxclass is None:
             nxclass = self.__getnxclass(name)
-        status = nxlib.nxiopengroup_(self.handle, name, nxclass)
+        status = nxlib.nxiopengroup_(self.handle, self._str2bytes(name),
+                                     self._str2bytes(nxclass))
         if status == ERROR:
             raise ValueError("Could not open %s:%s in %s" %
                              (nxclass, name, self._loc()))
@@ -670,6 +684,8 @@ class NeXus(object):
         nxclass = ctypes.create_string_buffer(MAXNAMELEN)
         n = c_int(0)
         status = nxlib.nxigetgroupinfo_(self.handle,_ref(n),path,nxclass)
+        path = self._bytes2str(path)
+        nxclass = self._bytes2str(nxclass)
         if status == ERROR:
             raise ValueError("Could not get group info: %s" % (self._loc()))
         # print("getgroupinfo", self._loc(), nxclass.value, name.value, n.value)
@@ -723,7 +739,7 @@ class NeXus(object):
         # if nxclass == 'SDS':
         #     dtype = _pytype_code(storage.value)
         # print("nextentry", nxclass.value, name.value, storage.value)
-        return name.value,nxclass.value
+        return self._bytes2str(name.value), self._bytes2str(nxclass.value)
 
     def getentries(self):
         """
@@ -879,7 +895,7 @@ class NeXus(object):
         if self._indata:
             status = ERROR
         else:
-            status = nxlib.nxiopendata_(self.handle, name)
+            status = nxlib.nxiopendata_(self.handle, self._str2bytes(name))
         if status == ERROR:
             raise ValueError("Could not open data %s: %s" % (name, self._loc()))
         self._path.append((name,"SDS"))
@@ -924,7 +940,7 @@ class NeXus(object):
         # print("makedata", self._loc(), name, shape, dtype)
         storage = _nxtype_code[str(dtype)]
         shape = numpy.asarray(shape,'int64')
-        status = nxlib.nximakedata64_(self.handle,name,storage,len(shape),
+        status = nxlib.nximakedata64_(self.handle,self._str2bytes(name),storage,len(shape),
                                       shape.ctypes.data_as(c_int64_p))
         if status == ERROR:
             raise ValueError("Could not create data %s: %s" %
@@ -958,7 +974,9 @@ class NeXus(object):
             chunks[-1] = shape[-1]
         else:
             chunks = numpy.array(chunks,'int64')
-        status = nxlib.nxicompmakedata64_(self.handle,name,storage,len(dims),
+        status = nxlib.nxicompmakedata64_(self.handle,
+                                          self._str2bytes(name),
+                                          storage,len(dims),
                                           dims.ctypes.data_as(c_int64_p),
                                           _compression_code[mode],
                                           chunks.ctypes.data_as(c_int64_p))
@@ -1123,7 +1141,7 @@ class NeXus(object):
             raise NeXusError("Could not get next attr: %s" % (self._loc()))
         dtype = _pytype_code[storage.value]
         # print("getnextattr", name.value, length.value, dtype)
-        return name.value, length.value, dtype
+        return self._bytes2str(name.value), length.value, dtype
 
     # TODO: Resolve discrepency between NeXus API documentation and
     # TODO: apparent behaviour for getattr/putattr length.
@@ -1142,7 +1160,8 @@ class NeXus(object):
         storage = c_int(_nxtype_code[str(dtype)])
         # print("getattr", self._loc(), name, length, size, dtype)
         size = c_int(size)
-        status = nxlib.nxigetattr_(self.handle,name,pdata,_ref(size),_ref(storage))
+        status = nxlib.nxigetattr_(self.handle,self._str2bytes(name),
+                                   pdata,_ref(size),_ref(storage))
         if status == ERROR:
             raise ValueError("Could not read attr %s: %s" % (name, self._loc()))
         # print("getattr", self._loc(), name, datafn())
@@ -1194,7 +1213,8 @@ class NeXus(object):
 
         # Perform the call
         storage = c_int(_nxtype_code[dtype])
-        status = nxlib.nxiputattr_(self.handle,name,data,length,storage)
+        status = nxlib.nxiputattr_(self.handle,self._str2bytes(name),
+                                   data,length,storage)
         if status == ERROR:
             raise NeXusError("Could not write attr %s: %s" %
                              (name, self._loc()))
@@ -1289,7 +1309,8 @@ class NeXus(object):
 
         Corresponds to NXmakenamedlink(handle,name,&ID)
         """
-        status = nxlib.nximakenamedlink_(self.handle,name,_ref(ID))
+        status = nxlib.nximakenamedlink_(self.handle,self._str2bytes(name),
+                                         _ref(ID))
         if status == ERROR:
             raise NeXusError("Could not make link %s: %s" % (name, self._loc()))
 
@@ -1364,7 +1385,7 @@ class NeXus(object):
         status = nxlib.nxiinquirefile_(self.handle,filename,maxnamelen)
         if status == ERROR:
             raise NeXusError("Could not determine filename: %s" % (self._loc()))
-        return filename.value
+        return self._bytes2str(filename.value)
 
     nxlib.nxilinkexternal_.restype = c_int
     nxlib.nxilinkexternal_.argtyps = [c_void_p, c_char_p,
@@ -1378,7 +1399,10 @@ class NeXus(object):
 
         Corresponds to NXisexternalgroup(&handle,name,nxclass,file,len)
         """
-        status = nxlib.nxilinkexternal_(self.handle,name,nxclass,url)
+        status = nxlib.nxilinkexternal_(self.handle,
+                                        self._str2bytes(name),
+                                        self._str2bytes(nxclass),
+                                        self._str2bytes(url))
         if status == ERROR:
             raise NeXusError("Could not link %s to %s: %s" %
                              (name, url, self._loc()))
@@ -1394,12 +1418,15 @@ class NeXus(object):
         Corresponds to NXisexternalgroup(&handle,name,nxclass,file,len)
         """
         url = ctypes.create_string_buffer(maxnamelen)
-        status = nxlib.nxiisexternalgroup_(self.handle,name,nxclass,
-                                              url,maxnamelen)
+        status = nxlib.nxiisexternalgroup_(self.handle,
+                                           self._str2bytes(name),
+                                           self._str2bytes(nxclass),
+                                           url,
+                                           maxnamelen)
         if status == ERROR:
             return None
         else:
-            return url.value
+            return self._bytes2str(url.value)
 
     # ==== Utility functions ====
     def _loc(self):
