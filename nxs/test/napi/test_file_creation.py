@@ -19,14 +19,20 @@ import os
 
 class test_file_creation(unittest.TestCase):
 
+    @unittest.skipIf('SKIP_NXS_TESTS_HDF5' in os.environ,
+                     "HDF5 tests disabled in environment")
     def test_hdf5(self):
         f = napi.open("test_hdf5.nxs","w5")
         os.remove("test_hdf5.nxs")
         
+    @unittest.skipIf('SKIP_NXS_TESTS_HDF4' in os.environ,
+                     "HDF4 tests disabled in environment")
     def test_hdf4(self):
         f = napi.open("test_hdf4.nxs","w4")
         os.remove("test_hdf4.nxs")
         
+    @unittest.skipIf('SKIP_NXS_TESTS_MXML' in os.environ,
+                     "MXML tests disabled in environment")
     def test_mxml(self):
         f = napi.open("test_mxml.nxs","wx")
         
